@@ -1,79 +1,217 @@
-# Seccomp-Test
-## _Use example for Seccomp_
+# Seccomp-BPF Learning Lab
 
-Seccomp is a tool used to filter system calls, and in the same way, debug a program against possible vulnerabilities. If you need more inforamtion about it, you may want to check the Seccomp entry in the [Linux Manual (man)](https://man7.org/linux/man-pages/man2/seccomp.2.html) or in the [Wikipedia](https://en.wikipedia.org/wiki/Seccomp).
+> A progressive C laboratory for understanding Linux system-call filtering with seccomp and classic BPF.
 
-You may also want to check the [pdf file](https://github.com/jagumiel/seccomp-test/blob/master/SSC-Desarrollo_y_Demostracion-JA_Gumiel.pdf) on this repository. It is written in Spanish.
+[![Language: C](https://img.shields.io/badge/language-C-00599C?style=flat-square&logo=c&logoColor=white)](https://www.c-language.org/)
+[![Platform: Linux](https://img.shields.io/badge/platform-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)](https://www.kernel.org/)
+[![Security: seccomp--BPF](https://img.shields.io/badge/security-seccomp--BPF-4C1?style=flat-square)](https://docs.kernel.org/userspace-api/seccomp_filter.html)
+[![Status: Educational](https://img.shields.io/badge/status-educational-blue?style=flat-square)](#project-status)
 
+This repository demonstrates how a Linux program can progressively reduce the kernel attack surface available to it. The same small `fork()` example is developed through four stages: first without confinement, then with a syscall allowlist, next with a diagnostic `SIGSYS` reporter, and finally with a deliberately expanded policy.
 
-## Tree Structure
+The project uses the low-level kernel interface directly: a classic BPF program examines each system call, validates the calling architecture and returns an allow, trap or terminate action. It is intended as a learning lab for Linux security, systems programming and application hardening.
 
-    .
-    ├── Paso1                                           # Step 1: First scenario.
-    ├── Paso2                                           # Step 2: Second scenario.
-    ├── Paso3                                           # Step 3: Third scenario.
-    ├── Paso4                                           # Step 4: Fourth scenario.
-    ├── Instructions.txt                                # Compiling instructions.
-    ├── SSC-Desarrollo_y_Demostracion-JA_Gumiel.pdf     # PDF in Spanish.
-    └── README.md                                       # You are here.
+> [!IMPORTANT]
+> seccomp filtering is not a complete sandbox. It restricts the system calls visible to a process, but it does not independently control files, identities, information flow or every other system resource. Combine it with other isolation and hardening mechanisms for real security boundaries.
 
+## What this project demonstrates
 
-## Requirements
-An application will be programmed in C language. "Autoconf", "autoheader" and "make" will also be used. If it is not installed on your system, you will have to update the list of repositories and add these programs.
+- Installing a seccomp filter with `prctl()`.
+- Setting `PR_SET_NO_NEW_PRIVS` before enabling an unprivileged filter.
+- Validating the syscall ABI before checking syscall numbers.
+- Building an allowlist with classic BPF instructions.
+- Observing the difference between `SECCOMP_RET_KILL` and `SECCOMP_RET_TRAP`.
+- Handling `SIGSYS` during policy development to identify a blocked syscall.
+- Showing that a filter installed before `fork()` also constrains the child.
+- Iteratively refining a policy from observed application behaviour.
 
-```sh
-sudo apt-get update
-sudo apt-get install gcc
-sudo apt-get install autoconf
-sudo apt-get install make
+## Learning path
+
+Each directory is a complete snapshot of the example at one point in the learning process. Work through them in order; the differences between consecutive steps are the core of the exercise.
+
+| Step | Directory | Change introduced | Expected lesson |
+| --- | --- | --- | --- |
+| 1 | [`paso1/`](paso1/) | Baseline program using `fork()`, `sleep()` and `wait()` | Observe the program before applying any syscall restrictions. |
+| 2 | [`paso2/`](paso2/) | Minimal seccomp allowlist with a terminate-by-default action | The process is stopped as soon as it requests a syscall not present in the policy. |
+| 3 | [`paso3/`](paso3/) | Development-only `SIGSYS` reporter and trap action | Identify the first blocked syscall; in the reference environment it is `clone()`. |
+| 4 | [`paso4/`](paso4/) | Expanded allowlist including the calls needed to create and run the child | The child can complete, while the parent is still stopped when it reaches a non-allowed wait operation. |
+
+The progression can be summarized as:
+
+```text
+baseline program
+      -> deny by default
+      -> report the missing syscall
+      -> review and deliberately extend the allowlist
 ```
 
-## How to compile?
-Open the desired folder, E.g. Paso1 and generate the executable. You just have to introduce the following commands on your Linux console:
+This is the main security idea behind the laboratory: an observed syscall should not be allowed automatically. It should first be understood and then either permitted because the application genuinely needs it or removed by changing the program design.
 
-```sh
+## How the filter works
+
+The filter is installed before the call to `fork()`:
+
+```c
+prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog);
+```
+
+Its BPF program follows four decisions:
+
+1. Read and validate the architecture stored in `struct seccomp_data`.
+2. Read the system-call number.
+3. Return `SECCOMP_RET_ALLOW` for calls explicitly included in the allowlist.
+4. Apply the default action to every other call.
+
+Steps 2 and 4 terminate on a disallowed syscall. Steps 3 and 4 include the diagnostic reporter, which changes the default action to `SECCOMP_RET_TRAP`, handles `SIGSYS` and prints the triggering syscall before exiting.
+
+> [!WARNING]
+> The reporter is intentionally a development aid. Its own header emits a compiler warning stating that it must not be used in production.
+
+## Repository structure
+
+```text
+.
+├── paso1/                         # Unfiltered fork example
+├── paso2/                         # Initial seccomp allowlist
+├── paso3/                         # Syscall reporting during policy development
+├── paso4/                         # Extended allowlist and partial execution
+├── Instructions.txt               # Original short build instructions
+├── SSC-Desarrollo_y_Demostracion-JA_Gumiel.pdf
+│                                    # Full project report in Spanish
+└── README.md
+```
+
+The complete rationale, original environment, source changes and execution evidence are documented in:
+
+**[SCC - Seccomp: Cómo evitar las llamadas al sistema](SSC-Desarrollo_y_Demostracion-JA_Gumiel.pdf)** (Spanish, PDF)
+
+## Requirements
+
+- Linux with seccomp filter support.
+- An x86 or x86-64 development environment; see [Compatibility](#compatibility).
+- GCC or another compatible C compiler.
+- GNU Make.
+- GNU Autoconf and Autoheader.
+
+On Debian or Ubuntu:
+
+```bash
+sudo apt update
+sudo apt install build-essential autoconf
+```
+
+You can inspect whether the current process exposes seccomp state with:
+
+```bash
+grep -E '^(NoNewPrivs|Seccomp|Seccomp_filters):' /proc/self/status
+```
+
+Kernel configuration files, when available, can also be checked for `CONFIG_SECCOMP` and `CONFIG_SECCOMP_FILTER`.
+
+## Build and run
+
+Choose a step and build it inside its directory. For example:
+
+```bash
+cd paso1
 autoconf
 autoheader
-./configure
+sh ./configure
 make
 ./procFork
 ```
 
-The application is a fork. A father program creates a son program. It uses system calls, so this tutorial uses Seccomp to control the use of system calls, filtering and allowing ow denying the system call execution.
+Repeat the same procedure in `paso2`, `paso3` or `paso4`.
 
-## Which are the test-cases?
+### Expected observations
 
-The cases are divided into the 4 folders, which are based on the same base code.
+#### Step 1 - baseline
 
-### Paso 1 _(or **Step 1**):_ Initial application development
-This is the base program. I am doing the test over this code. It is a simple application which creates a son process invocking the **fork()** system call.
+Both processes complete normally:
 
-You can compile and execute this program and you will see the execution is successfull.
+```text
+Hijo en ejecucion. Espere.
+Hijo terminado, saliendo..
+Proceso padre a la espera...
+Padre terminado...
+```
 
-### Paso 2 _(or **Step 2**):_ Adding filters to the application
+#### Step 2 - blocked syscall
 
-Next, you have to add the "seccomp-bpf.h" library and update the "configure.ac" file to also add the "linux/seccomp.h" library.
+The minimal allowlist does not permit process creation. The kernel stops the program, commonly reported by the shell as:
 
-An architecture will have to be made in the programming file. It will check if system calls are allowed. If it is not, the process will be terminated.
+```text
+Bad system call
+```
 
-The result after the execution is an error message that does not give too much information. What be deduced from this result is that it applies the filter, since there is at least one call to the system that is not contemplated and that "seccomp" does not allow it to be done, ending the process inmediatly.
+#### Step 3 - policy discovery
 
-What is missing at this point is to get the system call that is being done, so it can be debugged afterwards.
+The trap-based reporter identifies the first missing call in the original environment:
 
-### Paso 3 _(or **Step 3**):_ Reporting the system calls
+```text
+Looks like you also need syscall: clone(...)
+```
 
-In this step one of the added features of the “seccomp” filter will be used. This will allow to capture failed system calls and report the user immediately before terminating.
+The exact syscall number and even the syscall name may differ across architectures, C libraries and kernel versions.
 
-The meaning of this stage is to launch an execution, see what system calls are done and know them. In this way, the programmer can decide whether to allow them and add them to the "white list" or if, on the contrary, he must think of another way to program the application without making that call. The latter in the event that it could be a vulnerability for the system.
+#### Step 4 - deliberately expanded policy
 
-For this scenario, three files are necessary: “syscall-reporter.c”, “syscall-reporter.h” and “syscall-reporter.mk”. The latter has had to be modified, in Debian 9 the library path is different from the one that appears in the original file.
+In the original 32-bit Debian 9 environment, the child is allowed to run and finish. The parent then reaches a wait-related operation that is not in the allowlist and is stopped by the filter. This demonstrates that allowing one blocked syscall often reveals the next dependency and that policy construction is iterative.
 
-When compiling the program, the compiler warns that the "syscall-reporter" has been included in the program, and says that it is not used in production. It is fine to debugging purposes, but in a final application it is not frowned upon.
+## Compatibility
 
-When executing, it tells us which system call it has stopped on. In this case, it warns of the first one it hunts, which is "clone ()",
+The original experiment was performed on **32-bit Debian 9** in a virtual machine, and the executables currently stored in the repository are i386 binaries. The included helper header explicitly targets the i386 and x86-64 ABIs, but the syscall policy in Step 4 retains 32-bit-specific names such as `fstat64`.
 
-### Paso 4 _(or **Step 4**):_ Debugging or allowing system calls
+Consequently:
 
-In this step we intend to see what happens when the "clone ()" system call, typical of "fork ()", is allowed. What will not be allowed is the "wait ()".
+- Steps 1-3 still demonstrate the intended progression on a typical x86-64 Linux system.
+- Step 4 does not compile unchanged on modern x86-64 systems where `__NR_fstat64` is not defined.
+- Newer C libraries may use different calls, such as `clone3`, and vDSO behaviour can also alter what is observed.
+- Syscall numbers and calling conventions are architecture-specific; a policy copied from one ABI must not be assumed safe or correct on another.
 
-The "sleep ()" and "clone ()" have been allowed, but not the "wait ()". The parent does "wait ()" while the child is running, then it "kills" that process. However, the child uses a "sleep ()", which is allowed, and it finishes executing correctly.
+For a faithful reproduction of the report, use a compatible 32-bit Debian environment. Porting the final step to current x86-64 Linux is intentionally left as future work rather than silently broadening the policy.
+
+## Security notes
+
+- Prefer an **allowlist**. A denylist can miss new syscalls or alternative ways to perform the same operation.
+- Always validate the architecture before interpreting a syscall number.
+- Install the narrowest policy that supports the intended application behaviour.
+- Treat the syscall reporter as a diagnostic tool, not a production enforcement mechanism.
+- Do not assume that an unknown program is safe to execute merely because a small seccomp example has been added around it.
+- Test every policy against the exact architecture, C library, kernel and application build that will run in production.
+
+## Project status
+
+This repository preserves an educational seccomp-BPF experiment and its original evidence. It is not currently a portable sandboxing library or a production-ready policy generator.
+
+The code was reviewed on a current x86-64 Linux environment with these results:
+
+| Step | Build result | Runtime result |
+| --- | --- | --- |
+| 1 | Successful | Parent and child complete. |
+| 2 | Successful | Process terminates with `SIGSYS` as intended. |
+| 3 | Successful | Reporter identifies `clone` as the blocked syscall. |
+| 4 | Requires porting | Compilation stops at the 32-bit-specific `fstat64` policy entry. |
+
+These results are evidence of the original architecture dependency, not a CI guarantee. No automated workflow is currently configured.
+
+## Source provenance and licensing
+
+The `seccomp-bpf.h` and syscall-reporter sources identify Will Drewry, Kees Cook and The Chromium OS Authors in their file headers and state that they are governed by a BSD-style license. The original learning material is referenced below.
+
+The repository does not currently declare a repository-wide license. Until licensing and third-party notices are added explicitly, review the individual source headers before reusing the code.
+
+## References
+
+- [Linux kernel documentation: Seccomp BPF](https://docs.kernel.org/userspace-api/seccomp_filter.html)
+- [Linux manual page: `seccomp(2)`](https://man7.org/linux/man-pages/man2/seccomp.2.html)
+- [Kees Cook: Using simple seccomp filters](https://outflux.net/teach-seccomp/)
+- [GNU Autoconf manual](https://www.gnu.org/software/autoconf/manual/autoconf.html)
+
+## Author
+
+Developed and documented by **Jose Ángel Gumiel**.
+
+- [GitHub](https://github.com/jagumiel)
+- [Technical blog](https://jagumiel.xyz/blog/)
