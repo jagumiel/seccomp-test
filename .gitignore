@@ -1,0 +1,36 @@
+# Compiled binaries and objects
+**/procFork
+**/*.o
+**/*.a
+**/*.so
+**/*.so.*
+
+# Autoconf-generated files
+**/autom4te.cache/
+**/aclocal.m4
+**/autoscan.log
+**/config.cache
+**/config.h
+**/config.h.in
+**/config.log
+**/config.status
+**/configure
+**/configure.scan
+**/stamp-h1
+
+# Generated syscall lookup table
+**/syscall-names.h
+
+# Runtime artifacts
+**/core
+**/core.*
+
+# Editor and operating-system files
+*~
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Keep the handwritten build and source files:
+# Makefile, configure.ac, *.c, *.h and *.mk
